@@ -1,0 +1,15 @@
+# kdeconnect-adapter/Cargo.toml
+
+[package]
+name = "kdeconnect-adapter"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+kdeconnect-core = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

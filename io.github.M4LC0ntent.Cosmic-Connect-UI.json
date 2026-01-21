@@ -1,0 +1,49 @@
+{
+  "id": "io.github.M4LC0ntent.Cosmic-Connect-UI",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "base": "com.system76.Cosmic.BaseApp",
+  "base-version": "stable",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "cosmic-connect-applet",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=inherit-wayland-socket",
+    "--socket=session-bus",
+    "--device=dri",
+    "--share=network",
+    "--filesystem=home:ro",
+    "--filesystem=xdg-download",
+    "--filesystem=xdg-config/cosmic:rw",
+    "--talk-name=org.freedesktop.Notifications",
+    "--talk-name=org.freedesktop.portal.Desktop"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin"
+  },
+  "modules": [
+    {
+      "name": "cosmic-connect-applet",
+      "buildsystem": "simple",
+      "build-options": {
+        "env": {
+          "CARGO_HOME": "/run/build/cosmic-connect-applet/cargo"
+        }
+      },
+      "build-commands": [
+        "just build-release",
+        "just install-flatpak"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/YOUR_USERNAME/cosmic-connect",
+          "tag": "v0.1.0"
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}
