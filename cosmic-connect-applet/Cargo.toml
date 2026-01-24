@@ -18,11 +18,6 @@ libcosmic = { git = "https://github.com/pop-os/libcosmic.git", branch = "master"
 ] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-
-# Replace zbus with kdeconnect-adapter
-kdeconnect-adapter = { path = "../kdeconnect-adapter" }
-
-# Keep other dependencies
 futures = "0.3"
 futures-util = "0.3"
 urlencoding = "2.1"
@@ -31,6 +26,11 @@ lazy_static = "1.5"
 ctrlc = "3.4"
 async-stream = "0.3"
 anyhow = "1.0"
+ashpd = "0.12.1"
+percent-encoding = "2.3"
+# Replace zbus with kdeconnect-adapter
+kdeconnect-adapter = { path = "../kdeconnect-adapter" }
+
 
 [[bin]]
 name = "cosmic-connect-applet"
