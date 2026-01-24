@@ -4,7 +4,6 @@
 use ashpd::desktop::file_chooser::SelectedFiles;
 use percent_encoding::percent_decode;
 
-/// Open file picker dialog for selecting files using XDG Desktop Portal
 pub async fn pick_files(
     title: impl Into<String>,
     multiple: bool,
@@ -119,4 +118,20 @@ pub async fn pick_folder(title: impl Into<String>) -> Option<String> {
     }
     
     None
+}
+
+/// Read clipboard content using wl-paste
+pub async fn read_clipboard() -> Result<String, std::io::Error> {
+    let output = tokio::process::Command::new("wl-paste")
+        .output()
+        .await?;
+    
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to read clipboard"
+        ))
+    }
 }

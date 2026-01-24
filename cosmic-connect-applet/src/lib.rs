@@ -4,9 +4,10 @@
 //! This library provides shared modules for the KDE Connect applet,
 //! settings window, and SMS window binaries.
 
-pub mod backend;  // Replaces dbus module
-pub mod plugins;
+pub mod backend;
 pub mod messages;
 pub mod models;
+pub mod notifications;
+pub mod plugins;
 pub mod portal;
 pub mod ui;

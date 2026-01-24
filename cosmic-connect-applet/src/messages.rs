@@ -6,35 +6,35 @@ use crate::models::Device;
 #[derive(Debug, Clone)]
 pub enum Message {
     TogglePopup,
+    PopupClosed(cosmic::iced::window::Id),
     RefreshDevices,
     DevicesUpdated(Vec<Device>),
     ToggleDeviceMenu(String),
     
     // Device actions
     PingDevice(String),
-    #[allow(dead_code)]
     PairDevice(String),
-    #[allow(dead_code)]
     UnpairDevice(String),
     RingDevice(String),
     BrowseDevice(String),
-    SendFile(String),
+    SendFiles(String),
     SendSMS(String),
     ShareClipboard(String),
-    #[allow(dead_code)]
-    ShareUrl(String, String),
+    ShareText(String),
+    ShareUrl(String),
     
-    // Advanced features (not yet implemented)
-    #[allow(dead_code)]
+    // Advanced features
     RemoteInput(String),
     LockDevice(String),
-    OpenSettings,
-    UseAsMonitor(String),
-    #[allow(dead_code)]
     PresenterMode(String),
+    UseAsMonitor(String),
+    OpenSettings,
     
     // Pairing
     AcceptPairing(String),
     RejectPairing(String),
     PairingRequestReceived(String, String, String), // device_id, device_name, device_type
+    
+    // Delayed refresh for post-pairing updates
+    DelayedRefresh,
 }
