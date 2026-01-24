@@ -1,4 +1,5 @@
 // cosmic-connect-applet/src/backend.rs
+// cosmic-connect-applet/src/backend.rs
 //! Backend module replacing D-Bus with native KDE Connect adapter.
 //!
 //! This module provides the same interface as the old dbus.rs but uses
@@ -26,6 +27,7 @@ lazy_static::lazy_static! {
 }
 
 /// Initialize the backend
+#[allow(dead_code)]
 pub async fn initialize() -> Result<()> {
     let mut adapter_guard = ADAPTER.lock().await;
     
@@ -43,6 +45,7 @@ pub async fn initialize() -> Result<()> {
 }
 
 /// Get next event from adapter
+#[allow(dead_code)]
 pub async fn next_event() -> Option<CoreEvent> {
     let mut adapter_guard = ADAPTER.lock().await;
     if let Some(ref mut adapter) = *adapter_guard {
@@ -59,18 +62,20 @@ pub async fn fetch_devices() -> Vec<UiDevice> {
 }
 
 /// Update device in cache
+#[allow(dead_code)]
 pub async fn update_device(device_id: String, device: UiDevice) {
     let mut devices = DEVICES.lock().await;
     devices.insert(device_id, device);
 }
 
 /// Remove device from cache
+#[allow(dead_code)]
 pub async fn remove_device(device_id: &str) {
     let mut devices = DEVICES.lock().await;
     devices.remove(device_id);
 }
 
-/// Pair with a device
+/// Pair with a device (also used to initiate pairing request)
 pub async fn pair_device(device_id: String) -> Result<()> {
     let adapter_guard = ADAPTER.lock().await;
     if let Some(ref adapter) = *adapter_guard {
@@ -92,6 +97,23 @@ pub async fn unpair_device(device_id: String) -> Result<()> {
     }
 }
 
+/// Accept an incoming pairing request
+/// This is essentially the same as pair_device - when you receive a pairing request
+/// and accept it, you send a pair packet back to complete the handshake
+pub async fn accept_pairing(device_id: String) -> Result<()> {
+    eprintln!("=== Accepting Pairing Request ===");
+    eprintln!("Device: {}", device_id);
+    pair_device(device_id).await
+}
+
+/// Reject an incoming pairing request
+/// This is essentially the same as unpair_device - rejecting sends an unpair packet
+pub async fn reject_pairing(device_id: String) -> Result<()> {
+    eprintln!("=== Rejecting Pairing Request ===");
+    eprintln!("Device: {}", device_id);
+    unpair_device(device_id).await
+}
+
 /// Send ping to device
 pub async fn ping_device(device_id: String) -> Result<()> {
     let adapter_guard = ADAPTER.lock().await;
@@ -109,56 +131,6 @@ pub async fn send_files(device_id: String, files: Vec<String>) -> Result<()> {
     if let Some(ref adapter) = *adapter_guard {
         let id = DeviceId(device_id);
         adapter.send_files(id, files).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Request battery status
-#[allow(dead_code)]
-pub async fn request_battery(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.battery().request_battery_status(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-// Media player functions removed - COSMIC desktop handles media controls natively via MPRIS
-
-/// Request notifications
-#[allow(dead_code)]
-pub async fn request_notifications(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.notifications().request_notifications(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Dismiss notification
-#[allow(dead_code)]
-pub async fn dismiss_notification(device_id: String, notification_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.notifications().dismiss_notification(id, notification_id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Reply to notification
-#[allow(dead_code)]
-pub async fn reply_notification(device_id: String, notification_id: String, message: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.notifications().reply_to_notification(id, notification_id, message).await
     } else {
         Err(anyhow::anyhow!("Adapter not initialized"))
     }
@@ -187,7 +159,8 @@ pub async fn request_conversations(device_id: String) -> Result<()> {
     }
 }
 
-/// Request specific conversation
+/// Request messages for a specific conversation
+#[allow(dead_code)]
 pub async fn request_conversation(device_id: String, thread_id: i64) -> Result<()> {
     let adapter_guard = ADAPTER.lock().await;
     if let Some(ref adapter) = *adapter_guard {
@@ -198,7 +171,7 @@ pub async fn request_conversation(device_id: String, thread_id: i64) -> Result<(
     }
 }
 
-/// Send SMS
+/// Send SMS message
 #[allow(dead_code)]
 pub async fn send_sms(device_id: String, phone_number: String, message: String) -> Result<()> {
     let adapter_guard = ADAPTER.lock().await;
@@ -210,24 +183,13 @@ pub async fn send_sms(device_id: String, phone_number: String, message: String) 
     }
 }
 
-/// Start SFTP browsing
-pub async fn start_sftp(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.sftp().start_browsing(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Request remote commands
+/// Start SFTP mount
 #[allow(dead_code)]
-pub async fn request_commands(device_id: String) -> Result<()> {
+async fn start_sftp(device_id: String) -> Result<()> {
     let adapter_guard = ADAPTER.lock().await;
     if let Some(ref adapter) = *adapter_guard {
         let id = DeviceId(device_id);
-        adapter.commands().request_commands(id).await
+        adapter.sftp().mount(id).await
     } else {
         Err(anyhow::anyhow!("Adapter not initialized"))
     }

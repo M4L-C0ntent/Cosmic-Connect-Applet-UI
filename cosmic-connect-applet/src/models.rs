@@ -1,4 +1,5 @@
 // cosmic-connect-applet/src/models.rs
+// #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
 
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -9,22 +10,28 @@ pub struct Device {
     pub is_paired: bool,
     pub battery_level: Option<i32>,
     pub is_charging: Option<bool>,
+    #[allow(dead_code)]
     pub has_battery: bool,
     pub has_ping: bool,
     pub has_share: bool,
     pub has_findmyphone: bool,
     pub has_sms: bool,
     pub has_clipboard: bool,
+    #[allow(dead_code)]
     pub has_contacts: bool,
+    #[allow(dead_code)]
     pub has_mpris: bool,
+    #[allow(dead_code)]
     pub has_remote_keyboard: bool,
     pub has_sftp: bool,
+    #[allow(dead_code)]
     pub has_presenter: bool,
     pub has_lockdevice: bool,
     pub has_virtualmonitor: bool,
     pub pairing_requests: i32,
     // Connectivity information
     pub signal_strength: Option<i32>,  // 0-4 bars, or -1 for no signal
+    #[allow(dead_code)]
     pub network_type: Option<String>,  // "5G", "4G", "3G", "2G", etc.
 }
 

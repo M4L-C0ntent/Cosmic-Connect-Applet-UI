@@ -1,4 +1,6 @@
 // cosmic-connect-applet/src/notifications.rs
+// #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
+
 use std::error::Error as StdError;
 
 /// Pairing notification data sent to the UI
@@ -62,6 +64,7 @@ pub fn start_notification_listener(
 }
 
 /// Show a desktop notification for pairing request
+#[allow(dead_code)]
 pub async fn show_pairing_notification(
     device_name: &str,
     device_id: &str,

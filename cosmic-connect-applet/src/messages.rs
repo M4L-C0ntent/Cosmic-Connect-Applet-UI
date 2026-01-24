@@ -1,42 +1,40 @@
 // cosmic-connect-applet/src/messages.rs
+// #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
+
+use crate::models::Device;
+
 #[derive(Debug, Clone)]
 pub enum Message {
-    // Popup control
     TogglePopup,
-    
-    // Device management
     RefreshDevices,
-    DevicesUpdated(Vec<crate::models::Device>),
-    PairDevice(String),
-    UnpairDevice(String),
-    AcceptPairing(String),
-    RejectPairing(String),
-    
-    // Device menu toggle
+    DevicesUpdated(Vec<Device>),
     ToggleDeviceMenu(String),
     
-    // Communication
+    // Device actions
     PingDevice(String),
+    #[allow(dead_code)]
+    PairDevice(String),
+    #[allow(dead_code)]
+    UnpairDevice(String),
+    RingDevice(String),
+    BrowseDevice(String),
+    SendFile(String),
     SendSMS(String),
     ShareClipboard(String),
-    
-    // File operations
-    SendFile(String),
+    #[allow(dead_code)]
     ShareUrl(String, String),
-    BrowseDevice(String),
     
-    // Remote control
+    // Advanced features (not yet implemented)
+    #[allow(dead_code)]
     RemoteInput(String),
-    RingDevice(String),
     LockDevice(String),
-    
-    // Advanced features
-    PresenterMode(String),
-    UseAsMonitor(String),
-    
-    // Settings
     OpenSettings,
+    UseAsMonitor(String),
+    #[allow(dead_code)]
+    PresenterMode(String),
     
-    // Pairing notifications
+    // Pairing
+    AcceptPairing(String),
+    RejectPairing(String),
     PairingRequestReceived(String, String, String), // device_id, device_name, device_type
 }
