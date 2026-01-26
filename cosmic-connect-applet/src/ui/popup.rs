@@ -205,6 +205,6 @@ pub fn create_popup_view<'a>(devices: &'a HashMap<String, Device>, expanded_devi
     }
 
     widget::scrollable(content)
-        .height(Length::Fill)
+        .height(Length::Shrink)
         .into()
 }

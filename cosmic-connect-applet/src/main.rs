@@ -83,7 +83,7 @@ impl cosmic::Application for KdeConnectApplet {
                     self.popup.replace(new_id);
 
                     let mut popup_settings = self.core.applet.get_popup_settings(
-                        WindowId::from(new_id),
+                        self.core.main_window_id().unwrap(),
                         new_id,
                         None,
                         None,
@@ -92,7 +92,6 @@ impl cosmic::Application for KdeConnectApplet {
                     popup_settings.positioner.size_limits = cosmic::iced::Limits::NONE
                         .max_width(400.0)
                         .min_width(300.0)
-                        .min_height(200.0)
                         .max_height(600.0);
 
                     return Task::batch(vec![
@@ -275,7 +274,12 @@ impl cosmic::Application for KdeConnectApplet {
             return widget::text("").into();
         }
         
-        ui::popup::create_popup_view(&self.devices, self.expanded_device.as_ref(), None)
+        let content = ui::popup::create_popup_view(&self.devices, self.expanded_device.as_ref(), None);
+        
+        self.core
+            .applet
+            .popup_container(content)
+            .into()
     }
     
     fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
