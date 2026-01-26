@@ -37,4 +37,7 @@ pub enum Message {
     
     // Delayed refresh for post-pairing updates
     DelayedRefresh,
+    
+    // MPRIS events from phone - store as JSON value to avoid direct dependency
+    MprisReceived(String, serde_json::Value), // device_id, mpris_data
 }

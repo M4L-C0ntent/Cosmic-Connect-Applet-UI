@@ -3,7 +3,6 @@
 use cosmic::app::Core;
 use cosmic::iced::window::Id as SurfaceId;
 use cosmic::iced::Subscription;
-use cosmic::iced_runtime::core::window::Id as WindowId;
 use cosmic::{widget, Element, Task};
 use std::collections::HashMap;
 use tokio::sync::Mutex as TokioMutex;
@@ -253,6 +252,14 @@ impl cosmic::Application for KdeConnectApplet {
                 eprintln!("Device: {} ({})", device_name, device_id);
                 eprintln!("Type: {}", device_type);
             }
+            Message::MprisReceived(device_id, mpris_data) => {
+                eprintln!("=== MPRIS Data Received ===");
+                eprintln!("Device: {}", device_id);
+                eprintln!("MPRIS Data: {:?}", mpris_data);
+                
+                // TODO: Store MPRIS data and expose via D-Bus for COSMIC media controls
+                // For now, just log the event - full D-Bus MPRIS proxy implementation needed
+            }
         }
         Task::none()
     }
@@ -321,6 +328,13 @@ impl cosmic::Application for KdeConnectApplet {
                             eprintln!("✗ Device disconnected: {}", id.0);
                             backend::remove_device(&id.0).await;
                             return Some((Message::RefreshDevices, ()));
+                        }
+                        CoreEvent::Mpris((id, mpris_data)) => {
+                            eprintln!("♪ MPRIS event from device: {}", id.0);
+                            // Serialize MPRIS data to JSON
+                            if let Ok(json_data) = serde_json::to_value(&mpris_data) {
+                                return Some((Message::MprisReceived(id.0, json_data), ()));
+                            }
                         }
                         _ => {}
                     }
