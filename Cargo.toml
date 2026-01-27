@@ -21,7 +21,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # External kdeconnect-core from hepp3n
-kdeconnect-core = { git = "https://github.com/hepp3n/kdeconnect.git" }
+# Pulling from Forked Repo for Testing
+kdeconnect-core = { git = "https://github.com/M4L-C0ntent/kdeconnect.git", branch = "mpris-patch" }
+# Disabled for Testing Repo
+#kdeconnect-core = { git = "https://github.com/hepp3n/kdeconnect.git" }
 
 # Local crates
 kdeconnect-adapter = { path = "./kdeconnect-adapter" }
