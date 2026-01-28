@@ -3,8 +3,6 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo lock file (libraries should not commit this)
-Cargo.lock
 
 # IDE files
 .vscode/
