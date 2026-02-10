@@ -2,7 +2,6 @@
 
 [workspace]
 members = [
-    "kdeconnect-adapter",
     "cosmic-connect-applet",
     "kdeconnect-service",
     "kdeconnect-dbus-client",
@@ -28,8 +27,6 @@ kdeconnect-core = { git = "https://github.com/M4L-C0ntent/kdeconnect.git", branc
 # Disabled for Testing Repo
 #kdeconnect-core = { git = "https://github.com/hepp3n/kdeconnect.git" }
 
-# Local crates
-kdeconnect-adapter = { path = "./kdeconnect-adapter" }
 
 [profile.release]
 opt-level = 3

@@ -3019,18 +3019,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kdeconnect-adapter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "kdeconnect-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kdeconnect-core"
 version = "0.1.0"
 source = "git+https://github.com/M4L-C0ntent/kdeconnect.git?branch=testing#2d8cbaaabe095d6e62e589c49c1e71e52ea49290"
@@ -3073,7 +3061,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
- "kdeconnect-adapter",
  "kdeconnect-core",
  "serde",
  "serde_json",

@@ -166,10 +166,14 @@ pub async fn reject_pairing(device_id: String) -> Result<()> {
 }
 
 /// Ring a device (findmyphone)
-pub async fn ring_device(_device_id: String) -> Result<()> {
-    eprintln!("⚠️  Ring device not yet implemented via D-Bus");
-    // TODO: Add ring_device to D-Bus interface
-    Ok(())
+pub async fn ring_device(device_id: String) -> Result<()> {
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.ring_device(&device_id).await
 }
 
 /// Request SMS conversations from a device

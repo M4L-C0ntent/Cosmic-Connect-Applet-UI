@@ -38,6 +38,7 @@ trait Daemon {
     async fn send_ping(&self, device_id: &str, message: &str) -> zbus::Result<()>;
     async fn send_files(&self, device_id: &str, files: Vec<String>) -> zbus::Result<()>;
     async fn send_clipboard(&self, device_id: &str, content: &str) -> zbus::Result<()>;
+    async fn ring_device(&self, device_id: &str) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn device_connected(&self, device_id: String, device: Device) -> zbus::Result<()>;
@@ -114,6 +115,11 @@ impl KdeConnectClient {
         Ok(self.daemon_proxy.send_clipboard(device_id, content).await?)
     }
 
+    /// Ring a device (findmyphone)
+    pub async fn ring_device(&self, device_id: &str) -> Result<()> {
+        Ok(self.daemon_proxy.ring_device(device_id).await?)
+    }
+
     /// Request SMS conversations
     pub async fn request_conversations(&self, device_id: &str) -> Result<()> {
         Ok(self.sms_proxy.request_conversations(device_id).await?)
@@ -146,7 +152,7 @@ impl KdeConnectClient {
                 }
             }
         });
-        
+
         let paired_stream = daemon_paired.filter_map(|signal| async move {
             match signal.args() {
                 Ok(args) => Some(ServiceEvent::DevicePaired(args.device_id, args.device)),
@@ -156,7 +162,7 @@ impl KdeConnectClient {
                 }
             }
         });
-        
+
         let disconnected_stream = daemon_disconnected.filter_map(|signal| async move {
             match signal.args() {
                 Ok(args) => Some(ServiceEvent::DeviceDisconnected(args.device_id)),
@@ -166,7 +172,7 @@ impl KdeConnectClient {
                 }
             }
         });
-        
+
         let sms_stream = sms_messages.filter_map(|signal| async move {
             match signal.args() {
                 Ok(args) => Some(ServiceEvent::SmsMessagesReceived(args.messages_json)),
@@ -177,13 +183,13 @@ impl KdeConnectClient {
             }
         });
 
-        // Merge all signal streams - just use select_all without explicit boxing
-        futures::stream::select_all([
-            connected_stream.boxed(),
-            paired_stream.boxed(),
-            disconnected_stream.boxed(),
-            sms_stream.boxed(),
+        // Merge all streams
+        use futures::stream::select_all;
+        select_all(vec![
+            Box::pin(connected_stream) as std::pin::Pin<Box<dyn futures::Stream<Item = ServiceEvent> + Send + '_>>,
+            Box::pin(paired_stream),
+            Box::pin(disconnected_stream),
+            Box::pin(sms_stream),
         ])
     }
-
 }
