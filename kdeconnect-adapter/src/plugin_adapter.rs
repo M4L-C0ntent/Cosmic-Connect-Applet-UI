@@ -208,12 +208,16 @@ impl SmsAdapter {
     }
     
     pub async fn request_conversations(&self, device_id: DeviceId) -> anyhow::Result<()> {
+        eprintln!("=== SMS Adapter: Requesting conversations ===");
+        eprintln!("Device ID: {:?}", device_id);
+
         let packet = ProtocolPacket::new(
-            PacketType::SmsRequest,
-            json!({
-                "requestConversations": true
-            })
+            PacketType::SmsRequestConversations,
+            json!({})
         );
+
+        eprintln!("Packet type: {:?}", packet.packet_type);
+        eprintln!("Sending packet...");
         
         self.event_sender
             .send(AppEvent::SendPacket(device_id, packet))

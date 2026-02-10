@@ -4,6 +4,7 @@
 // #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
 #![allow(dead_code)]
 
+// use std::collections::HashMap;
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Length, Subscription};
 use cosmic::widget;
@@ -49,47 +50,58 @@ impl Application for SmsWindow {
     }
 
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
-        let (device_id, device_name) = flags;
-        
-        eprintln!("=== SMS Window Starting ===");
-        eprintln!("Device: {} ({})", device_name, device_id);
-        
-        let mut app = SmsWindow {
-            core,
-            device_id: device_id.clone(),
-            device_name: device_name.clone(),
-            conversations: Vec::new(),
-            messages: Vec::new(),
-            selected_thread: None,
-            message_input: String::new(),
-            search_query: String::new(),
-            is_loading: true,
-            contacts: ContactsMap::new(),
-            show_new_chat_dialog: false,
-            new_chat_phone_input: String::new(),
-            show_emoji_picker: false,
-            emoji_category: EmojiCategory::Smileys,
-        };
+    let (device_id, device_name) = flags;
+    
+    eprintln!("=== SMS Window Starting ===");
+    eprintln!("Device: {} ({})", device_name, device_id);
+    
+    // Initialize SMS D-Bus client
+    tokio::spawn(async {
+        if let Err(e) = dbus::initialize().await {
+            eprintln!("✗ Failed to initialize SMS D-Bus client: {:?}", e);
+        }
+    });
+    
+    let mut app = SmsWindow {
+        core,
+        device_id: device_id.clone(),
+        device_name: device_name.clone(),
+        conversations: Vec::new(),
+        messages: Vec::new(),
+        selected_thread: None,
+        message_input: String::new(),
+        search_query: String::new(),
+        is_loading: true,
+        contacts: ContactsMap::new(),
+        show_new_chat_dialog: false,
+        new_chat_phone_input: String::new(),
+        show_emoji_picker: false,
+        emoji_category: EmojiCategory::Smileys,
+    };
 
-        let title = format!("SMS - {}", device_name);
-        let title_task = app.set_window_title(title, app.core.main_window_id().unwrap());
+    let title = format!("SMS - {}", device_name);
+    let title_task = app.set_window_title(title, app.core.main_window_id().unwrap());
 
-        let device_id_conv = device_id.clone();
-        let device_id_contacts = device_id.clone();
+    let device_id_conv = device_id.clone();
+    let device_id_contacts = device_id.clone();
 
-        (
-            app,
-            Task::batch(vec![
-                title_task,
-                cosmic::task::future(async move {
-                    SmsMessage::ConversationsLoaded(dbus::fetch_conversations(device_id_conv).await)
-                }),
-                cosmic::task::future(async move {
-                    SmsMessage::ContactsLoaded(dbus::fetch_contacts(device_id_contacts).await)
-                }),
-            ]),
-        )
-    }
+    (
+        app,
+        Task::batch(vec![
+            title_task,
+            // Fetch conversations via D-Bus
+            cosmic::task::future(async move {
+                // Small delay to let D-Bus client initialize
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                SmsMessage::ConversationsLoaded(dbus::fetch_conversations(device_id_conv).await)
+            }),
+            // Fetch contacts
+            cosmic::task::future(async move {
+                SmsMessage::ContactsLoaded(dbus::fetch_contacts(device_id_contacts).await)
+            }),
+        ]),
+    )
+}
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
@@ -220,12 +232,10 @@ impl Application for SmsWindow {
         let device_id = self.device_id.clone();
         
         Subscription::batch(vec![
-            cosmic::iced::time::every(std::time::Duration::from_secs(30))
-                .map(|_| SmsMessage::LoadConversations),
             Subscription::run_with_id(
-                "sms_protocol_events",
+                "sms-events",
                 dbus::listen_for_sms_events_stream(device_id)
-            ),
+            ).map(SmsMessage::ProtocolEventReceived)
         ])
     }
 }
@@ -345,49 +355,47 @@ impl SmsWindow {
     }
 
     fn send_message(&mut self) -> Task<SmsMessage> {
-        if self.message_input.trim().is_empty() {
-            return Task::none();
-        }
-
-        let Some(thread_id) = &self.selected_thread else {
-            eprintln!("⚠️ No thread selected");
-            return Task::none();
-        };
-
-        // Get phone number from conversation
-        let Some(conv) = self.conversations.iter().find(|c| &c.thread_id == thread_id) else {
-            eprintln!("⚠️ Conversation not found");
-            return Task::none();
-        };
-
-        let phone_number = conv.phone_number.clone();
-        let message = self.message_input.clone();
-        let device_id = self.device_id.clone();
-
-        eprintln!("Sending message to {}: {}", phone_number, message);
-
-        // Clear input immediately for better UX
-        self.message_input.clear();
-
-        // Create optimistic message
-        let optimistic_msg = Message {
-            id: format!("sending_{}", now_millis()),
-            thread_id: thread_id.clone(),
-            body: message.clone(),
-            address: phone_number.clone(),
-            date: now_millis(),
-            type_: 2, // Sent message
-            read: true,
-        };
-
-        self.messages.push(optimistic_msg);
-        self.messages.sort_by_key(|m| m.date);
-
-        cosmic::task::future(async move {
-            dbus::send_sms(device_id, phone_number, message).await;
-            SmsMessage::RefreshThread
-        })
+    if self.message_input.trim().is_empty() {
+        return Task::none();
     }
+
+    let Some(thread_id) = &self.selected_thread else {
+        eprintln!("⚠️ No thread selected");
+        return Task::none();
+    };
+
+    // Get phone number from conversation
+    let Some(conv) = self.conversations.iter().find(|c| &c.thread_id == thread_id) else {
+        eprintln!("⚠️ Conversation not found");
+        return Task::none();
+    };
+
+    let device_id = self.device_id.clone();
+    let phone_number = conv.phone_number.clone();
+    let message = self.message_input.clone();
+
+    // Clear input immediately for better UX
+    self.message_input.clear();
+
+    // Create optimistic message
+    let optimistic_msg = Message {
+        id: format!("sending_{}", now_millis()),
+        thread_id: thread_id.clone(),
+        body: message.clone(),
+        address: phone_number.clone(),
+        date: now_millis(),
+        type_: 2, // Sent message
+        read: true,
+    };
+
+    self.messages.push(optimistic_msg);
+    self.messages.sort_by_key(|m| m.date);
+
+    cosmic::task::future(async move {
+        dbus::send_sms(device_id, phone_number, message).await;
+        SmsMessage::RefreshThread
+    })
+}
 
     fn refresh_thread(&mut self) -> Task<SmsMessage> {
         if let Some(thread_id) = &self.selected_thread {

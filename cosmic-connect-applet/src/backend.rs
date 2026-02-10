@@ -1,261 +1,264 @@
 // cosmic-connect-applet/src/backend.rs
-// cosmic-connect-applet/src/backend.rs
-//! Backend module replacing D-Bus with native KDE Connect adapter.
-//!
-//! This module provides the same interface as the old dbus.rs but uses
-//! the kdeconnect-adapter instead of D-Bus for communication.
-// #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
+//! Backend interface using D-Bus client to communicate with kdeconnect-service
 
+use anyhow::Result;
+use kdeconnect_dbus_client::{KdeConnectClient, ServiceEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
-use anyhow::Result;
+use futures::StreamExt;
 
-use kdeconnect_adapter::{
-    KdeConnectAdapter,
-    CoreEvent,
-    Device,
-    DeviceId,
-    PairState,
-};
-
-use crate::models::Device as UiDevice;
+use crate::models::Device;
 
 lazy_static::lazy_static! {
-    static ref ADAPTER: Arc<Mutex<Option<KdeConnectAdapter>>> = Arc::new(Mutex::new(None));
-    static ref DEVICES: Arc<Mutex<HashMap<String, UiDevice>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref CLIENT: Arc<Mutex<Option<Arc<KdeConnectClient>>>> = Arc::new(Mutex::new(None));
+    static ref DEVICE_CACHE: Arc<Mutex<HashMap<String, Device>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
-/// Initialize the backend
-#[allow(dead_code)]
+/// Initialize the D-Bus client connection
 pub async fn initialize() -> Result<()> {
-    let mut adapter_guard = ADAPTER.lock().await;
+    eprintln!("=== Initializing D-Bus Client ===");
     
-    if adapter_guard.is_none() {
-        let adapter = KdeConnectAdapter::new().await?;
-        *adapter_guard = Some(adapter);
-        
-        // Start discovery
-        if let Some(ref adapter) = *adapter_guard {
-            adapter.broadcast().await?;
-        }
-    }
+    let client = KdeConnectClient::new().await?;
     
+    let mut client_guard = CLIENT.lock().await;
+    *client_guard = Some(Arc::new(client));
+    
+    eprintln!("✓ D-Bus client connected to kdeconnect-service");
     Ok(())
 }
 
-/// Get next event from adapter
-#[allow(dead_code)]
-pub async fn next_event() -> Option<CoreEvent> {
-    let mut adapter_guard = ADAPTER.lock().await;
-    if let Some(ref mut adapter) = *adapter_guard {
-        adapter.next_event().await
-    } else {
-        None
+/// Fetch all devices from the service
+pub async fn fetch_devices() -> Vec<Device> {
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        eprintln!("⚠️  D-Bus client not initialized");
+        return vec![];
+    };
+    
+    match client.list_devices().await {
+        Ok(dbus_devices) => {
+            let mut cache = DEVICE_CACHE.lock().await;
+            let devices: Vec<Device> = dbus_devices.into_iter().map(|d| {
+                let device = Device {
+                    id: d.id.clone(),
+                    name: d.name.clone(),
+                    device_type: "phone".to_string(),
+                    is_paired: d.is_paired,
+                    is_reachable: d.is_reachable,
+                    battery_level: None,
+                    is_charging: None,
+                    network_type: None,
+                    signal_strength: None,
+                    pairing_requests: 0,
+                    has_battery: false,
+                    has_ping: true,
+                    has_sms: true,
+                    has_contacts: false,
+                    has_clipboard: true,
+                    has_findmyphone: true,
+                    has_share: true,
+                    has_sftp: false,
+                    has_mpris: false,
+                    has_remote_keyboard: false,
+                    has_presenter: false,
+                    has_lockdevice: false,
+                    has_virtualmonitor: false,
+                };
+                cache.insert(d.id.clone(), device.clone());
+                device
+            }).collect();
+            devices
+        }
+        Err(e) => {
+            eprintln!("✗ Failed to fetch devices: {:?}", e);
+            vec![]
+        }
     }
-}
-
-/// Fetch all devices
-pub async fn fetch_devices() -> Vec<UiDevice> {
-    let devices = DEVICES.lock().await;
-    devices.values().cloned().collect()
 }
 
 /// Update device in cache
-#[allow(dead_code)]
-pub async fn update_device(device_id: String, device: UiDevice) {
-    let mut devices = DEVICES.lock().await;
-    devices.insert(device_id, device);
+pub async fn update_device(device_id: String, device: Device) {
+    let mut cache = DEVICE_CACHE.lock().await;
+    cache.insert(device_id, device);
 }
 
 /// Remove device from cache
-#[allow(dead_code)]
 pub async fn remove_device(device_id: &str) {
-    let mut devices = DEVICES.lock().await;
-    devices.remove(device_id);
+    let mut cache = DEVICE_CACHE.lock().await;
+    cache.remove(device_id);
 }
 
-/// Pair with a device (also used to initiate pairing request)
+/// Pair with a device
 pub async fn pair_device(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.pair_device(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.pair_device(&device_id).await
 }
 
 /// Unpair from a device
 pub async fn unpair_device(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.unpair_device(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.unpair_device(&device_id).await
 }
 
-/// Accept an incoming pairing request
-/// This is essentially the same as pair_device - when you receive a pairing request
-/// and accept it, you send a pair packet back to complete the handshake
+/// Send a ping to a device
+pub async fn ping_device(device_id: String) -> Result<()> {
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.send_ping(&device_id, "Ping from COSMIC!").await
+}
+
+/// Send files to a device
+pub async fn send_files(device_id: String, files: Vec<String>) -> Result<()> {
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.send_files(&device_id, files).await
+}
+
+/// Send clipboard content to a device
+pub async fn send_clipboard(device_id: String, content: String) -> Result<()> {
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.send_clipboard(&device_id, &content).await
+}
+
+/// Browse device filesystem (via SFTP)
+pub async fn browse_device_filesystem(_device_id: String) -> Result<()> {
+    eprintln!("⚠️  Browse filesystem not yet implemented via D-Bus");
+    // TODO: Implement SFTP browsing through D-Bus
+    Ok(())
+}
+
+/// Accept a pairing request
 pub async fn accept_pairing(device_id: String) -> Result<()> {
-    eprintln!("=== Accepting Pairing Request ===");
-    eprintln!("Device: {}", device_id);
+    // Pairing acceptance is handled automatically by the service
+    // Just trigger a pair request
     pair_device(device_id).await
 }
 
-/// Reject an incoming pairing request
-/// This is essentially the same as unpair_device - rejecting sends an unpair packet
+/// Reject a pairing request
 pub async fn reject_pairing(device_id: String) -> Result<()> {
-    eprintln!("=== Rejecting Pairing Request ===");
-    eprintln!("Device: {}", device_id);
+    // Rejecting is essentially unpairing
     unpair_device(device_id).await
 }
 
-/// Send ping to device
-pub async fn ping_device(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.send_ping(id, "Hello from COSMIC!".to_string()).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+/// Ring a device (findmyphone)
+pub async fn ring_device(_device_id: String) -> Result<()> {
+    eprintln!("⚠️  Ring device not yet implemented via D-Bus");
+    // TODO: Add ring_device to D-Bus interface
+    Ok(())
 }
 
-/// Send files to device
-pub async fn send_files(device_id: String, files: Vec<String>) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.send_files(id, files).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Send clipboard content
-pub async fn send_clipboard(device_id: String, content: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.clipboard().send_clipboard(id, content).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Request SMS conversations
-#[allow(dead_code)]
+/// Request SMS conversations from a device
 pub async fn request_conversations(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.sms().request_conversations(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.request_conversations(&device_id).await
 }
 
-/// Request messages for a specific conversation
-#[allow(dead_code)]
+/// Request a specific SMS conversation thread
 pub async fn request_conversation(device_id: String, thread_id: i64) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.sms().request_conversation(id, thread_id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.request_conversation(&device_id, thread_id).await
 }
 
-/// Send SMS message
-#[allow(dead_code)]
+/// Send an SMS message
 pub async fn send_sms(device_id: String, phone_number: String, message: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.sms().send_sms(id, phone_number, message).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
+    let client_guard = CLIENT.lock().await;
+    
+    let Some(client) = client_guard.as_ref() else {
+        return Err(anyhow::anyhow!("D-Bus client not initialized"));
+    };
+    
+    client.send_sms(&device_id, &phone_number, &message).await
 }
 
-/// Start SFTP mount
-#[allow(dead_code)]
-async fn start_sftp(device_id: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.sftp().mount(id).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Execute remote command
-#[allow(dead_code)]
-pub async fn execute_command(device_id: String, command_key: String) -> Result<()> {
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        adapter.commands().execute_command(id, command_key).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Ring device (find my phone)
-pub async fn ring_device(device_id: String) -> Result<()> {
-    // Find my phone functionality
-    let adapter_guard = ADAPTER.lock().await;
-    if let Some(ref adapter) = *adapter_guard {
-        let id = DeviceId(device_id);
-        // Ring is typically done through ping or a specific plugin
-        adapter.send_ping(id, "Ring!".to_string()).await
-    } else {
-        Err(anyhow::anyhow!("Adapter not initialized"))
-    }
-}
-
-/// Browse device filesystem via SFTP
-pub async fn browse_device_filesystem(device_id: String) -> Result<()> {
-    start_sftp(device_id).await
-}
-
-/// Share files (alias for send_files)
-pub async fn share_files(device_id: String, files: Vec<String>) -> Result<()> {
-    send_files(device_id, files).await
-}
-
-impl From<Device> for UiDevice {
-    fn from(device: Device) -> Self {
-        UiDevice {
-            id: device.device_id.0.clone(),
-            name: device.name,
-            device_type: "phone".to_string(), // Default - can be updated from Identity packet
-            is_paired: device.pair_state == PairState::Paired,
-            is_reachable: true, // Connected if we have the device
-            battery_level: None,
-            is_charging: Some(false),
-            has_battery: false,
-            has_ping: true,
-            has_share: true,
-            has_findmyphone: false,
-            has_sms: false,
-            has_clipboard: true,
-            has_contacts: false,
-            has_mpris: false,
-            has_remote_keyboard: false,
-            has_sftp: false,
-            has_presenter: false,
-            has_lockdevice: false,
-            has_virtualmonitor: false,
-            pairing_requests: 0,
-            signal_strength: None,
-            network_type: None,
+/// Create a stream of service events
+pub async fn event_stream() -> futures::stream::BoxStream<'static, ServiceEvent> {
+    use tokio::sync::mpsc;
+    use tokio::time::{sleep, Duration};
+    
+    let (tx, rx) = mpsc::channel::<ServiceEvent>(100);
+    
+    // Spawn background task to listen for events
+    tokio::spawn(async move {
+        // Wait for client to be initialized (with timeout)
+        let mut attempts = 0;
+        let client = loop {
+            let client_guard = CLIENT.lock().await;
+            if let Some(client) = client_guard.clone() {
+                drop(client_guard);
+                break client;
+            }
+            drop(client_guard);
+            
+            attempts += 1;
+            if attempts > 20 {
+                eprintln!("⚠️  Timeout waiting for D-Bus client initialization");
+                return;
+            }
+            
+            eprintln!("⏳ Waiting for D-Bus client initialization... (attempt {})", attempts);
+            sleep(Duration::from_millis(100)).await;
+        };
+        
+        eprintln!("✓ Event stream: D-Bus client ready");
+        
+        let mut stream = client.listen_for_events().await;
+        
+        while let Some(event) = stream.next().await {
+            if tx.send(event).await.is_err() {
+                eprintln!("Event receiver dropped, stopping event listener");
+                break;
+            }
         }
-    }
+        
+        eprintln!("Event stream ended");
+    });
+    
+    // Return stream from channel that never ends
+    futures::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(event) => Some((event, rx)),
+            None => {
+                // Channel closed, sleep forever instead of ending
+                // This prevents the unfold panic
+                loop {
+                    sleep(Duration::from_secs(3600)).await;
+                }
+            }
+        }
+    }).boxed()
 }

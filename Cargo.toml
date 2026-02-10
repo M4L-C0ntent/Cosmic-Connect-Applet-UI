@@ -4,6 +4,8 @@
 members = [
     "kdeconnect-adapter",
     "cosmic-connect-applet",
+    "kdeconnect-service",
+    "kdeconnect-dbus-client",
 ]
 resolver = "2"
 

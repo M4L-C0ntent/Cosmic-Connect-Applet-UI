@@ -1,12 +1,9 @@
 [Desktop Entry]
-Name=Cosmic Connect Applet
-Exec=cosmic-connect-applet
-Terminal=false
 Type=Application
-StartupNotify=true
-NotShowIn=COSMIC
+Name=Cosmic Connect
+Comment=Connect to KDE Connect devices
 Icon=phone-symbolic
-Categories=Network
-Keywords=Cosmic;Applet;Connect;KDE Connect;
-X-CosmicApplet=true
-X-CosmicHoverPopup=Auto
+Exec=cosmic-connect-applet
+Categories=CosmicApplet;
+X-CosmicAppletCategories=Connectivity;
+NoDisplay=true

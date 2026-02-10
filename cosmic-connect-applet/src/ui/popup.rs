@@ -160,6 +160,14 @@ pub fn create_popup_view<'a>(devices: &'a HashMap<String, Device>, expanded_devi
                             .class(cosmic::theme::Button::Text)
                     );
                 }
+
+                // SMS button
+                menu_items = menu_items.push(
+                    widget::button::text("SMS Messages")
+                        .on_press(Message::SendSMS(device.id.clone()))
+                        .width(Length::Fill)
+                        .class(cosmic::theme::Button::Text)
+                );
                 
                 // File operations section
                 if device.has_share || device.has_sftp {
