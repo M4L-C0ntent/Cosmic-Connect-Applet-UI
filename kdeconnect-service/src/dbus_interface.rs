@@ -67,9 +67,17 @@ impl DaemonInterface {
 
     /// Send a ping to a device
     async fn send_ping(&self, device_id: String, message: String) -> zbus::fdo::Result<()> {
-        info!("D-Bus: SendPing called for {}", device_id);
-        self.event_sender.send(AppEvent::Ping((DeviceId(device_id), message)))
+        info!("D-Bus: SendPing called for {} with message: {}", device_id, message);
+        
+        // Use SendPacket directly for instant response
+        let packet = ProtocolPacket::new(
+            PacketType::Ping,
+            json!({ "message": message })
+        );
+        
+        self.event_sender.send(AppEvent::SendPacket(DeviceId(device_id), packet))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
         Ok(())
     }
 
@@ -96,12 +104,15 @@ impl DaemonInterface {
     /// Ring a device (findmyphone)
     async fn ring_device(&self, device_id: String) -> zbus::fdo::Result<()> {
         info!("D-Bus: RingDevice called for {}", device_id);
+        
         let packet = ProtocolPacket::new(
             PacketType::FindMyPhoneRequest,
             json!({})
         );
+        
         self.event_sender.send(AppEvent::SendPacket(DeviceId(device_id), packet))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
         Ok(())
     }
 
@@ -128,30 +139,39 @@ impl SmsInterface {
     /// Request all conversations from device
     async fn request_conversations(&self, device_id: String) -> zbus::fdo::Result<()> {
         info!("D-Bus: RequestConversations called for {}", device_id);
+        
         let packet = ProtocolPacket::new(
-            PacketType::SmsRequest,
+            PacketType::SmsRequestConversations,
             json!({})
         );
+        
         self.event_sender.send(AppEvent::SendPacket(DeviceId(device_id), packet))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
         Ok(())
     }
 
     /// Request messages from a specific conversation
     async fn request_conversation(&self, device_id: String, thread_id: i64) -> zbus::fdo::Result<()> {
         info!("D-Bus: RequestConversation called for {} thread {}", device_id, thread_id);
+        
         let packet = ProtocolPacket::new(
-            PacketType::SmsRequest,
-            json!({ "threadID": thread_id })
+            PacketType::SmsRequestConversation,
+            json!({
+                "threadID": thread_id
+            })
         );
+        
         self.event_sender.send(AppEvent::SendPacket(DeviceId(device_id), packet))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
         Ok(())
     }
 
     /// Send an SMS message
     async fn send_sms(&self, device_id: String, phone_number: String, message: String) -> zbus::fdo::Result<()> {
         info!("D-Bus: SendSms called for {}", device_id);
+        
         let packet = ProtocolPacket::new(
             PacketType::SmsRequest,
             json!({
@@ -160,8 +180,10 @@ impl SmsInterface {
                 "messageBody": message
             })
         );
+        
         self.event_sender.send(AppEvent::SendPacket(DeviceId(device_id), packet))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
         Ok(())
     }
 
@@ -173,6 +195,7 @@ impl SmsInterface {
 /// Main service coordinator
 pub struct KdeConnectService {
     connection: Connection,
+    #[allow(dead_code)]
     event_sender: Arc<mpsc::UnboundedSender<AppEvent>>,
     devices: Arc<Mutex<HashMap<String, DbusDevice>>>,
 }
@@ -287,7 +310,7 @@ impl KdeConnectService {
                 DaemonInterface::device_disconnected(iface_ref.signal_emitter(), device_id.0).await?;
             }
             ConnectionEvent::SmsMessages(sms_data) => {
-                info!("Event: SMS messages received");
+                info!("Event: SMS messages received - {} messages", sms_data.messages.len());
                 
                 let messages_json = serde_json::to_string(&sms_data)?;
                 
