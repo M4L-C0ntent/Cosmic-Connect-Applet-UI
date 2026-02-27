@@ -2,9 +2,10 @@
 use cosmic::{
     app::Core,
     iced::{Length, Subscription},
+    iced_futures::futures::StreamExt,
     widget, Application, ApplicationExt, Element, Task, Action,
 };
-use futures::StreamExt;
+use async_stream::stream;
 use std::collections::HashMap;
 
 use super::dbus;
@@ -58,17 +59,13 @@ impl Application for SmsWindow {
     type Message = SmsMessage;
     const APP_ID: &'static str = "com.system76.CosmicConnectSms";
 
-    fn core(&self) -> &Core {
-        &self.core
-    }
-
-    fn core_mut(&mut self) -> &mut Core {
-        &mut self.core
-    }
+    fn core(&self) -> &Core { &self.core }
+    fn core_mut(&mut self) -> &mut Core { &mut self.core }
 
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Action<Self::Message>>) {
         let (device_id, device_name) = flags;
-        
+        eprintln!("[SMS-APP] init() device_id={}", device_id);
+
         let mut app = Self {
             core,
             device_id: device_id.clone(),
@@ -86,40 +83,62 @@ impl Application for SmsWindow {
         let title = format!("SMS - {}", device_name);
         let title_task = app.set_window_title(title, app.core.main_window_id().unwrap());
 
-        let device_id_init = device_id.clone();
-        
-        (
-            app,
-            Task::batch(vec![
-                title_task,
-                // Initialize D-Bus client and request conversations
-                cosmic::task::future(async move {
-                    if let Err(e) = dbus::initialize().await {
-                        eprintln!("Failed to initialize SMS D-Bus client: {:?}", e);
-                    }
-                    
-                    // Request conversations
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    let convs = dbus::fetch_conversations(device_id_init.clone()).await;
-                    Action::App(SmsMessage::ConversationsLoaded(convs))
-                }),
-                // Fetch contacts
-                cosmic::task::future(async move {
-                    dbus::fetch_contacts(device_id).await;
-                    Action::App(SmsMessage::ContactsLoaded(HashMap::new()))
-                }),
-            ]),
-        )
+        (app, title_task)
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        // Subscribe to SMS D-Bus events
         let device_id = self.device_id.clone();
-        
+
+        // Use a stable ID — COSMIC will NOT restart this subscription as long
+        // as the same ID is returned and the stream hasn't ended.
+        // The stream is kept alive indefinitely by the reconnect loop inside.
         Subscription::run_with_id(
-            "sms-events",
-            dbus::listen_for_sms_events_stream(device_id)
-                .map(SmsMessage::ProtocolEventReceived)
+            format!("sms-{}", device_id),
+            stream! {
+                eprintln!("[SMS-SUB] stream started for device={}", device_id);
+
+                if let Err(e) = dbus::initialize().await {
+                    eprintln!("[SMS-SUB] init FAILED: {:?}", e);
+                    std::future::pending::<()>().await;
+                    return;
+                }
+
+                eprintln!("[SMS-SUB] D-Bus init OK, requesting conversations");
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                dbus::fetch_conversations(&device_id).await;
+
+                let Some(client) = dbus::get_client().await else {
+                    eprintln!("[SMS-SUB] no client, stream idle");
+                    std::future::pending::<()>().await;
+                    return;
+                };
+
+                eprintln!("[SMS-SUB] entering event loop");
+
+                loop {
+                    eprintln!("[SMS-SUB] subscribing to events");
+                    let mut event_stream = client.listen_for_events().await;
+
+                    while let Some(event) = event_stream.next().await {
+                        use kdeconnect_dbus_client::ServiceEvent;
+                        if let ServiceEvent::SmsMessagesReceived(json) = event {
+                            eprintln!("[SMS-SUB] SmsMessagesReceived len={}", json.len());
+                            let (messages, conversations) = dbus::parse_sms_messages(&json);
+                            for msg in messages {
+                                yield SmsMessage::ProtocolEventReceived(
+                                    ProtocolEvent::MessageReceived(msg)
+                                );
+                            }
+                            yield SmsMessage::ProtocolEventReceived(
+                                ProtocolEvent::ConversationsReceived(conversations)
+                            );
+                        }
+                    }
+
+                    eprintln!("[SMS-SUB] stream ended, reconnecting in 1s...");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            }
         )
     }
 
@@ -128,28 +147,26 @@ impl Application for SmsWindow {
             SmsMessage::LoadConversations => {
                 let device_id = self.device_id.clone();
                 return cosmic::task::future(async move {
-                    let convs = dbus::fetch_conversations(device_id).await;
-                    Action::App(SmsMessage::ConversationsLoaded(convs))
+                    dbus::fetch_conversations(&device_id).await;
+                    Action::App(SmsMessage::RefreshThread)
                 });
             }
             SmsMessage::ConversationsLoaded(conversations) => {
-                eprintln!("📥 Loaded {} conversations", conversations.len());
+                eprintln!("[SMS-APP] ConversationsLoaded: {}", conversations.len());
                 self.conversations = conversations;
                 self.update_conversation_names();
             }
             SmsMessage::ContactsLoaded(contacts) => {
-                eprintln!("📇 Loaded {} contacts", contacts.len());
                 self.contacts = contacts;
                 self.update_conversation_names();
             }
             SmsMessage::SelectThread(thread_id) => {
-                eprintln!("📱 Selected thread: {}", thread_id);
+                eprintln!("[SMS-APP] SelectThread: {}", thread_id);
                 self.selected_thread = Some(thread_id.clone());
                 self.messages.clear();
-                
                 let device_id = self.device_id.clone();
                 return cosmic::task::future(async move {
-                    dbus::request_conversation_messages(device_id, thread_id).await;
+                    dbus::request_conversation_messages(&device_id, &thread_id).await;
                     Action::App(SmsMessage::RefreshThread)
                 });
             }
@@ -160,48 +177,35 @@ impl Application for SmsWindow {
                 self.search_query = query;
             }
             SmsMessage::SendMessage => {
-                if self.message_input.trim().is_empty() {
-                    return Task::none();
-                }
-
-                let Some(thread_id) = &self.selected_thread else {
-                    return Task::none();
-                };
-
-                let Some(conv) = self.conversations.iter().find(|c| c.thread_id == *thread_id) else {
-                    return Task::none();
-                };
+                if self.message_input.trim().is_empty() { return Task::none(); }
+                let Some(thread_id) = self.selected_thread.clone() else { return Task::none(); };
+                let Some(conv) = self.conversations.iter().find(|c| c.thread_id == thread_id) else { return Task::none(); };
 
                 let device_id = self.device_id.clone();
                 let phone = conv.phone_number.clone();
-                let message = self.message_input.clone();
-                
-                // Create optimistic message
+                let text = self.message_input.clone();
                 let now = utils::now_millis();
-                let optimistic_msg = Message {
+
+                self.messages.push(Message {
                     id: format!("sending_{}", now),
                     thread_id: thread_id.clone(),
-                    body: message.clone(),
+                    body: text.clone(),
                     address: phone.clone(),
                     date: now,
                     type_: 2,
                     read: true,
-                };
-                
-                self.messages.push(optimistic_msg);
+                });
                 self.messages.sort_by_key(|m| m.date);
                 self.message_input.clear();
-                
+
                 return cosmic::task::future(async move {
-                    dbus::send_sms(device_id, phone, message).await;
+                    dbus::send_sms(&device_id, &phone, &text).await;
                     Action::App(SmsMessage::RefreshThread)
                 });
             }
-            SmsMessage::RefreshThread => {
-                // No-op, messages arrive via subscription
-            }
+            SmsMessage::RefreshThread => {}
             SmsMessage::ProtocolEventReceived(event) => {
-                eprintln!("📨 Protocol event received: {:?}", event);
+                eprintln!("[SMS-APP] ProtocolEventReceived: {:?}", std::mem::discriminant(&event));
                 self.handle_protocol_event(event);
             }
             SmsMessage::OpenNewChatDialog => {
@@ -214,33 +218,28 @@ impl Application for SmsWindow {
             SmsMessage::UpdateNewChatPhone(phone) => {
                 self.new_chat_phone_input = phone;
             }
-            SmsMessage::SelectContactForNewChat(phone, _name) => {
+            SmsMessage::SelectContactForNewChat(phone, _) => {
                 self.new_chat_phone_input = phone;
             }
             SmsMessage::CreateNewChat => {
-                // Create new conversation
                 let phone = self.new_chat_phone_input.trim().to_string();
                 if !phone.is_empty() {
                     let thread_id = format!("new_{}", utils::now_millis());
-                    let conv = Conversation {
+                    self.conversations.insert(0, Conversation {
                         thread_id: thread_id.clone(),
                         phone_number: phone,
                         contact_name: String::new(),
                         last_message: String::new(),
                         timestamp: utils::now_millis(),
                         unread: false,
-                    };
-                    self.conversations.insert(0, conv);
+                    });
                     self.show_new_chat_dialog = false;
                     self.new_chat_phone_input.clear();
                     return cosmic::task::message(Action::App(SmsMessage::SelectThread(thread_id)));
                 }
             }
-            SmsMessage::CloseWindow => {
-                std::process::exit(0);
-            }
+            SmsMessage::CloseWindow => std::process::exit(0),
         }
-
         Task::none()
     }
 
@@ -250,7 +249,6 @@ impl Application for SmsWindow {
         } else {
             views::view_main(self)
         };
-
         widget::container(content)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -262,38 +260,95 @@ impl SmsWindow {
     fn handle_protocol_event(&mut self, event: ProtocolEvent) {
         match event {
             ProtocolEvent::ConversationsReceived(conversations) => {
-                eprintln!("✓ Received {} conversations via D-Bus", conversations.len());
-                self.conversations = conversations;
+                eprintln!("[SMS-APP] ConversationsReceived: {} (upsert)", conversations.len());
+                for conv in conversations {
+                    // Check if there's a temporary new_* conversation with the same phone number.
+                    // This happens when the user sends to a new contact: we pre-create a "new_XXX"
+                    // conversation, phone assigns the real thread_id and confirms back.
+                    let new_idx = self.conversations.iter().position(|c| {
+                        c.thread_id.starts_with("new_") && c.phone_number == conv.phone_number
+                    });
+
+                    if let Some(idx) = new_idx {
+                        // The temporary entry's thread_id needs to become the real one.
+                        let old_thread_id = self.conversations[idx].thread_id.clone();
+
+                        // Update selected_thread if we were viewing the temp thread.
+                        if self.selected_thread.as_deref() == Some(&old_thread_id) {
+                            self.selected_thread = Some(conv.thread_id.clone());
+                        }
+
+                        // Fix thread_id on any optimistic messages so dedup works.
+                        for msg in &mut self.messages {
+                            if msg.thread_id == old_thread_id {
+                                msg.thread_id = conv.thread_id.clone();
+                            }
+                        }
+
+                        // Replace the temp entry with the real conversation.
+                        self.conversations[idx] = conv;
+                    } else if let Some(existing) = self.conversations.iter_mut()
+                        .find(|c| c.thread_id == conv.thread_id)
+                    {
+                        // Normal upsert — update fields of existing real conversation.
+                        existing.last_message = conv.last_message;
+                        existing.timestamp = conv.timestamp;
+                        existing.phone_number = conv.phone_number;
+                        existing.unread = conv.unread;
+                    } else {
+                        self.conversations.push(conv);
+                    }
+                }
+                self.conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                 self.update_conversation_names();
             }
             ProtocolEvent::MessageReceived(message) => {
-                eprintln!("✓ Received message for thread {}", message.thread_id);
-                
-                // Add to messages if this thread is selected
-                if let Some(selected) = &self.selected_thread {
-                    if *selected == message.thread_id {
-                        // Check if message already exists
-                        if !self.messages.iter().any(|m| m.id == message.id) {
-                            self.messages.push(message.clone());
-                            self.messages.sort_by_key(|m| m.date);
+                eprintln!("[SMS-APP] MessageReceived thread={}", message.thread_id);
+                // Determine the effective selected thread — after a new_* → real thread
+                // transition above, selected_thread is already the real thread_id.
+                let is_selected = self.selected_thread.as_deref() == Some(&message.thread_id);
+
+                if is_selected {
+                    let already_exists = self.messages.iter().any(|m| {
+                        // Exact ID match.
+                        m.id == message.id
+                        // OR: optimistic sent message (same body, both type=2, within 5 min).
+                        // Thread_id check is skipped here because it may have just been
+                        // updated from new_XXX → real_id in ConversationsReceived above.
+                        || (m.id.starts_with("sending_")
+                            && m.type_ == 2
+                            && message.type_ == 2
+                            && m.body == message.body
+                            && (m.date - message.date).abs() < 300_000)
+                    });
+
+                    if !already_exists {
+                        self.messages.push(message.clone());
+                    } else {
+                        // Replace the optimistic placeholder with the real message.
+                        if let Some(existing) = self.messages.iter_mut().find(|m| {
+                            m.id.starts_with("sending_")
+                            && m.type_ == 2
+                            && m.body == message.body
+                        }) {
+                            existing.id = message.id.clone();
+                            existing.thread_id = message.thread_id.clone();
+                            existing.date = message.date;
                         }
                     }
+                    self.messages.sort_by_key(|m| m.date);
                 }
-                
-                // Update conversation
+
+                // Always update the conversation preview regardless of selected thread.
                 if let Some(conv) = self.conversations.iter_mut()
-                    .find(|c| c.thread_id == message.thread_id) 
+                    .find(|c| c.thread_id == message.thread_id)
                 {
                     conv.last_message = message.body;
                     conv.timestamp = message.date;
                 }
-                
-                // Sort conversations by timestamp
                 self.conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
             }
-            ProtocolEvent::Error(err) => {
-                eprintln!("✗ SMS Protocol Error: {}", err);
-            }
+            ProtocolEvent::Error(e) => eprintln!("[SMS-APP] error: {}", e),
         }
     }
 

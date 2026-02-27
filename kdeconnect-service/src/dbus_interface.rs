@@ -224,6 +224,10 @@ pub struct KdeConnectService {
     devices: Arc<Mutex<HashMap<String, DbusDevice>>>,
 }
 
+/// Tracks devices that have already received an initial SMS sync this session.
+/// Prevents re-flooding the phone with SmsRequestConversations on every ~90s keepalive.
+type SmsSyncedSet = Arc<Mutex<std::collections::HashSet<String>>>;
+
 impl KdeConnectService {
     pub async fn new() -> Result<Self> {
         eprintln!("=== Initializing KDE Connect D-Bus Service ===");
@@ -269,12 +273,14 @@ impl KdeConnectService {
         eprintln!("Starting event processor...");
         let connection_clone = connection.clone();
         let devices_clone = devices.clone();
+        let event_sender_clone = event_sender.clone();
+        let sms_synced: SmsSyncedSet = Arc::new(Mutex::new(std::collections::HashSet::new()));
         tokio::spawn(async move {
             eprintln!("Event processor task running");
             loop {
                 if let Some(event) = event_receiver.recv().await {
                     eprintln!("📨 Received event from core");
-                    if let Err(e) = Self::handle_event(event, &connection_clone, &devices_clone).await {
+                    if let Err(e) = Self::handle_event(event, &connection_clone, &devices_clone, &event_sender_clone, &sms_synced).await {
                         eprintln!("❌ Error handling event: {:?}", e);
                     }
                 } else {
@@ -305,17 +311,20 @@ impl KdeConnectService {
         event: ConnectionEvent,
         connection: &Connection,
         devices: &Arc<Mutex<HashMap<String, DbusDevice>>>,
+        event_sender: &Arc<mpsc::UnboundedSender<AppEvent>>,
+        sms_synced: &SmsSyncedSet,
     ) -> Result<()> {
         match event {
             ConnectionEvent::Connected((device_id, device)) => {
                 info!("Event: Device connected - {}", device.name);
                 eprintln!("🔌 Device connected: {} ({})", device.name, device_id.0);
                 
+                let is_paired = matches!(device.pair_state, PairState::Paired);
                 let dbus_device = DbusDevice {
                     id: device_id.0.clone(),
                     name: device.name.clone(),
                     device_type: "phone".to_string(),
-                    is_paired: matches!(device.pair_state, PairState::Paired),
+                    is_paired,
                     is_reachable: true,
                 };
                 
@@ -324,8 +333,28 @@ impl KdeConnectService {
                 let iface_ref = connection.object_server()
                     .interface::<_, DaemonInterface>(DAEMON_PATH).await?;
                 
-                DaemonInterface::device_connected(iface_ref.signal_emitter(), device_id.0, dbus_device).await?;
+                DaemonInterface::device_connected(iface_ref.signal_emitter(), device_id.0.clone(), dbus_device).await?;
                 eprintln!("✓ Device connected signal emitted");
+
+                // Only request SMS once per device per session.
+                // The phone re-broadcasts its identity every ~90s; without this guard
+                // every keepalive would flood new SmsRequestConversations → duplicates.
+                if is_paired {
+                    let already_synced = sms_synced.lock().await.contains(&device_id.0);
+                    if !already_synced {
+                        sms_synced.lock().await.insert(device_id.0.clone());
+                        let sender = event_sender.clone();
+                        let did = device_id.0.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            let sms_packet = ProtocolPacket::new(PacketType::SmsRequestConversations, json!({}));
+                            let _ = sender.send(AppEvent::SendPacket(DeviceId(did), sms_packet));
+                            eprintln!("📱 Auto-requested SMS conversations (first connect this session)");
+                        });
+                    } else {
+                        eprintln!("📱 Skipping SMS re-sync — already synced this session");
+                    }
+                }
             }
             ConnectionEvent::DevicePaired((device_id, device)) => {
                 info!("Event: Device paired - {}", device.name);
@@ -344,13 +373,27 @@ impl KdeConnectService {
                 let iface_ref = connection.object_server()
                     .interface::<_, DaemonInterface>(DAEMON_PATH).await?;
                 
-                DaemonInterface::device_paired(iface_ref.signal_emitter(), device_id.0, dbus_device).await?;
+                DaemonInterface::device_paired(iface_ref.signal_emitter(), device_id.0.clone(), dbus_device).await?;
                 eprintln!("✓ Device paired signal emitted");
+
+                // Wait 2s for the phone to settle after pairing, then request SMS.
+                // The phone may open a fresh connection after accepting — we need to
+                // ensure that connection is established before sending plugin requests.
+                let sender = event_sender.clone();
+                let did = device_id.0.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let sms_packet = ProtocolPacket::new(PacketType::SmsRequestConversations, json!({}));
+                    let _ = sender.send(AppEvent::SendPacket(DeviceId(did), sms_packet));
+                    eprintln!("📱 Auto-requested SMS conversations after pairing (delayed)");
+                });
             }
             ConnectionEvent::Disconnected(device_id) => {
                 info!("Event: Device disconnected - {}", device_id.0);
                 eprintln!("🔌 Device disconnected: {}", device_id.0);
                 
+                // Clear sms_synced so the next genuine reconnect gets a fresh sync.
+                sms_synced.lock().await.remove(&device_id.0);
                 devices.lock().await.remove(&device_id.0);
                 
                 let iface_ref = connection.object_server()

@@ -1,11 +1,19 @@
 // cosmic-connect-applet/src/ui/popup.rs
+use cosmic::app::Core;
 use cosmic::iced::{Alignment, Length};
 use cosmic::{widget, Element};
 use std::collections::HashMap;
 use crate::models::Device;
 use crate::messages::Message;
 
-pub fn create_popup_view<'a>(devices: &'a HashMap<String, Device>, expanded_device: Option<&'a String>, _expanded_player_menu: Option<&'a String>) -> Element<'a, Message> {
+/// Build the popup view using the real application Core so popup_container
+/// has proper applet context, theme, and sizing.
+pub fn create_popup_view<'a>(
+    core: &'a Core,
+    devices: &'a HashMap<String, Device>,
+    expanded_device: Option<&'a String>,
+    _expanded_player_menu: Option<&'a String>,
+) -> Element<'a, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let mut content = widget::column().spacing(spacing.space_s).padding(spacing.space_s);
 
@@ -23,21 +31,19 @@ pub fn create_popup_view<'a>(devices: &'a HashMap<String, Device>, expanded_devi
 
     content = content.push(widget::divider::horizontal::default());
 
-    // Pairing requests - SORTED alphabetically
+    // Pairing requests
     let mut pairing_requests: Vec<_> = devices.values()
         .filter(|d| d.pairing_requests > 0 && !d.is_paired)
         .collect();
-    
-    // Sort pairing requests by device name
     pairing_requests.sort_by(|a, b| a.name.cmp(&b.name));
 
     if !pairing_requests.is_empty() {
         content = content.push(widget::text("Pairing Requests").size(14).font(cosmic::font::bold()));
-        
+
         for device in pairing_requests {
             let device_id_accept = device.id.clone();
             let device_id_reject = device.id.clone();
-            
+
             let request_card = widget::container(
                 widget::column()
                     .push(
@@ -72,147 +78,156 @@ pub fn create_popup_view<'a>(devices: &'a HashMap<String, Device>, expanded_devi
             .padding(spacing.space_s)
             .class(cosmic::theme::Container::Card)
             .width(Length::Fill);
-            
+
             content = content.push(request_card);
         }
-        
+
         content = content.push(widget::divider::horizontal::default());
     }
 
-    // Connected devices - SORTED alphabetically
-    let mut connected_devices: Vec<_> = devices.values()
-        .filter(|d| d.is_reachable && d.is_paired)
+    // All paired devices — reachable and unreachable — sorted alphabetically
+    let mut paired_devices: Vec<_> = devices.values()
+        .filter(|d| d.is_paired)
         .collect();
-    
-    // Sort connected devices by name
-    connected_devices.sort_by(|a, b| a.name.cmp(&b.name));
+    paired_devices.sort_by(|a, b| a.name.cmp(&b.name));
 
-    if !connected_devices.is_empty() {
-        content = content.push(widget::text("Connected Devices").size(14).font(cosmic::font::bold()));
-        
-        for device in connected_devices {
-            let is_expanded = expanded_device.is_some() && expanded_device.unwrap() == &device.id;
-            
-            let battery_text = if let Some(level) = device.battery_level {
-                format!("{}%", level)
-            } else {
-                String::new()
-            };
-            
-            let mut device_row = widget::row()
-                .push(widget::icon::from_name(device.device_icon()).size(24))
-                .push(
-                    widget::column()
-                        .push(widget::text(&device.name).size(14))
-                        .push(widget::text(&device.device_type).size(11))
-                        .spacing(spacing.space_xxxs)
-                        .width(Length::Fill)
-                )
-                .spacing(spacing.space_s)
-                .align_y(Alignment::Center);
-            
-            if !battery_text.is_empty() {
-                device_row = device_row.push(widget::text(battery_text).size(11));
-            }
-            
-            device_row = device_row.push(
-                widget::button::icon(
-                    widget::icon::from_name(if is_expanded { "go-up-symbolic" } else { "go-down-symbolic" })
-                )
-                .on_press(Message::ToggleDeviceMenu(device.id.clone()))
-                .class(cosmic::theme::Button::Icon)
-            );
-            
-            let device_button = widget::button::custom(device_row)
-                .on_press(Message::ToggleDeviceMenu(device.id.clone()))
+    if paired_devices.is_empty() {
+        content = content.push(
+            widget::container(widget::text("No paired devices").size(14))
+                .padding(spacing.space_m)
                 .width(Length::Fill)
-                .class(cosmic::theme::Button::Text);
-            
-            content = content.push(device_button);
-            
-            if is_expanded {
-                let mut menu_items = widget::column().spacing(spacing.space_xxs);
-                
-                // Quick actions section
-                menu_items = menu_items.push(widget::text("Quick Actions").size(12).font(cosmic::font::bold()));
-                
-                menu_items = menu_items.push(
-                    widget::button::text("Ping")
-                        .on_press(Message::PingDevice(device.id.clone()))
-                        .width(Length::Fill)
-                        .class(cosmic::theme::Button::Text)
-                );
-                
-                if device.has_findmyphone {
-                    menu_items = menu_items.push(
-                        widget::button::text("Find my phone")
-                            .on_press(Message::RingDevice(device.id.clone()))
-                            .width(Length::Fill)
-                            .class(cosmic::theme::Button::Text)
-                    );
-                }
-                
-                if device.has_clipboard {
-                    menu_items = menu_items.push(
-                        widget::button::text("Share clipboard")
-                            .on_press(Message::ShareClipboard(device.id.clone()))
-                            .width(Length::Fill)
-                            .class(cosmic::theme::Button::Text)
-                    );
-                }
+                .center_x(Length::Fill)
+        );
+    } else {
+        content = content.push(widget::text("Devices").size(14).font(cosmic::font::bold()));
 
-                // SMS button
+        for device in paired_devices {
+            content = content.push(create_device_card(device, &spacing, expanded_device));
+        }
+    }
+
+    let popup_content = widget::container(widget::scrollable(content))
+        .width(Length::Fixed(400.0))
+        .max_height(700.0)
+        .padding(spacing.space_xs)
+        .class(cosmic::theme::Container::Dialog);
+
+    // Use the real Core so the popup has proper applet context and theme
+    core.applet.popup_container(popup_content).into()
+}
+
+fn create_device_card<'a>(
+    device: &'a Device,
+    spacing: &cosmic::cosmic_theme::Spacing,
+    expanded_device: Option<&'a String>,
+) -> Element<'a, Message> {
+    let is_expanded = expanded_device == Some(&device.id);
+    let is_online = device.is_reachable;
+
+    let mut name_row = widget::row()
+        .push(widget::icon::from_name(device.device_icon()).size(20))
+        .push(widget::text(&device.name).size(14).width(Length::Fill))
+        .spacing(spacing.space_xs)
+        .align_y(Alignment::Center);
+
+    if !is_online {
+        name_row = name_row.push(widget::text("Offline").size(11));
+    } else if let Some(level) = device.battery_level {
+        name_row = name_row.push(widget::text(format!("{}%", level)).size(11));
+    }
+
+    name_row = name_row.push(
+        widget::button::icon(
+            widget::icon::from_name(if is_expanded { "go-up-symbolic" } else { "go-down-symbolic" })
+        )
+        .on_press(Message::ToggleDeviceMenu(device.id.clone()))
+        .class(cosmic::theme::Button::Icon)
+    );
+
+    let device_button = widget::button::custom(name_row)
+        .on_press(Message::ToggleDeviceMenu(device.id.clone()))
+        .width(Length::Fill)
+        .class(cosmic::theme::Button::Text);
+
+    let mut col = widget::column().push(device_button);
+
+    if is_expanded && is_online {
+        let mut menu_items = widget::column().spacing(spacing.space_xxs);
+
+        menu_items = menu_items.push(
+            widget::text("Quick Actions").size(12).font(cosmic::font::bold())
+        );
+        menu_items = menu_items.push(
+            widget::button::text("Ping")
+                .on_press(Message::PingDevice(device.id.clone()))
+                .width(Length::Fill)
+                .class(cosmic::theme::Button::Text)
+        );
+
+        if device.has_findmyphone {
+            menu_items = menu_items.push(
+                widget::button::text("Find my phone")
+                    .on_press(Message::RingDevice(device.id.clone()))
+                    .width(Length::Fill)
+                    .class(cosmic::theme::Button::Text)
+            );
+        }
+
+        if device.has_clipboard {
+            menu_items = menu_items.push(
+                widget::button::text("Share clipboard")
+                    .on_press(Message::ShareClipboard(device.id.clone()))
+                    .width(Length::Fill)
+                    .class(cosmic::theme::Button::Text)
+            );
+        }
+
+        menu_items = menu_items.push(
+            widget::button::text("SMS Messages")
+                .on_press(Message::SendSMS(device.id.clone()))
+                .width(Length::Fill)
+                .class(cosmic::theme::Button::Text)
+        );
+
+        if device.has_share || device.has_sftp {
+            menu_items = menu_items.push(widget::divider::horizontal::light());
+            menu_items = menu_items.push(
+                widget::text("Files").size(12).font(cosmic::font::bold())
+            );
+
+            if device.has_share {
                 menu_items = menu_items.push(
-                    widget::button::text("SMS Messages")
-                        .on_press(Message::SendSMS(device.id.clone()))
+                    widget::button::text("Send file")
+                        .on_press(Message::SendFiles(device.id.clone()))
                         .width(Length::Fill)
                         .class(cosmic::theme::Button::Text)
                 );
-                
-                // File operations section
-                if device.has_share || device.has_sftp {
-                    menu_items = menu_items.push(widget::divider::horizontal::light());
-                    menu_items = menu_items.push(widget::text("Files").size(12).font(cosmic::font::bold()));
-                    
-                    if device.has_share {
-                        menu_items = menu_items.push(
-                            widget::button::text("Send file")
-                                .on_press(Message::SendFiles(device.id.clone()))
-                                .width(Length::Fill)
-                                .class(cosmic::theme::Button::Text)
-                        );
-                    }
-                    
-                    if device.has_sftp {
-                        menu_items = menu_items.push(
-                            widget::button::text("Browse device")
-                                .on_press(Message::BrowseDevice(device.id.clone()))
-                                .width(Length::Fill)
-                                .class(cosmic::theme::Button::Text)
-                        );
-                    }
-                }
-                
-                let menu_container = widget::container(menu_items)
-                    .padding([spacing.space_xs, spacing.space_m])
-                    .class(cosmic::theme::Container::Background);
-                
-                content = content.push(menu_container);
+            }
+
+            if device.has_sftp {
+                menu_items = menu_items.push(
+                    widget::button::text("Browse device")
+                        .on_press(Message::BrowseDevice(device.id.clone()))
+                        .width(Length::Fill)
+                        .class(cosmic::theme::Button::Text)
+                );
             }
         }
-    } else {
-        content = content.push(
+
+        col = col.push(
+            widget::container(menu_items)
+                .padding([spacing.space_xs, spacing.space_m])
+                .class(cosmic::theme::Container::Background)
+        );
+    } else if is_expanded && !is_online {
+        col = col.push(
             widget::container(
-                widget::text("No connected devices")
-                    .size(12)
+                widget::text("Device is not reachable").size(12)
             )
-            .padding(spacing.space_s)
-            .width(Length::Fill)
-            .center_x(Length::Fill)
+            .padding([spacing.space_xs, spacing.space_m])
+            .class(cosmic::theme::Container::Background)
         );
     }
 
-    widget::scrollable(content)
-        .height(Length::Shrink)
-        .into()
+    col.into()
 }
