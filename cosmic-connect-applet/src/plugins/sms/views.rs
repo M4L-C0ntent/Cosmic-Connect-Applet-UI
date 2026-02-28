@@ -339,6 +339,10 @@ fn view_messages_list<'a>(app: &'a SmsWindow, spacing: &cosmic::cosmic_theme::Sp
 
     widget::scrollable(messages_column)
         .height(Length::Fill)
+        .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
+            cosmic::iced::widget::scrollable::Scrollbar::new()
+                .anchor(cosmic::iced::widget::scrollable::Anchor::End)
+        ))
         .into()
 }
 
