@@ -242,7 +242,9 @@ fn view_conversation_item<'a>(
             .class(cosmic::theme::Container::Primary)
             .into()
     } else {
-        button.into()
+        button
+            .class(cosmic::theme::Button::Text)
+            .into()
     }
 }
 
@@ -368,13 +370,15 @@ fn view_message_bubble<'a>(
         .push(widget::text(format_timestamp(msg.date)).size(11))
         .padding(spacing.space_s);
     
-    let message_bubble = widget::container(message_content)
-        .class(if is_sent {
-            cosmic::theme::Container::Primary
-        } else {
-            cosmic::theme::Container::Card
-        })
-        .max_width(500.0);
+    let message_bubble = if is_sent {
+        widget::container(message_content)
+            .class(cosmic::theme::Container::Primary)
+            .max_width(500.0)
+    } else {
+        widget::container(message_content)
+            .class(cosmic::theme::Container::Transparent)
+            .max_width(500.0)
+    };
 
     if is_sent {
         widget::row()
