@@ -13,6 +13,7 @@ use super::models::{Conversation, Message, ProtocolEvent};
 use super::utils;
 use super::views;
 
+#[allow(dead_code)]
 pub fn run(device_id: String, device_name: String) -> cosmic::iced::Result {
     cosmic::app::run::<SmsWindow>(
         cosmic::app::Settings::default(),
@@ -22,14 +23,18 @@ pub fn run(device_id: String, device_name: String) -> cosmic::iced::Result {
 
 #[derive(Clone, Debug)]
 pub enum SmsMessage {
+    #[allow(dead_code)]
     LoadConversations,
+    #[allow(dead_code)]
     ConversationsLoaded(Vec<Conversation>),
+    #[allow(dead_code)]
     ContactsLoaded(HashMap<String, String>),
     SelectThread(String),
     UpdateInput(String),
     UpdateSearch(String),
     SendMessage,
     RefreshThread,
+    #[allow(dead_code)]
     CloseWindow,
     ProtocolEventReceived(ProtocolEvent),
     OpenNewChatDialog,
@@ -42,6 +47,7 @@ pub enum SmsMessage {
 pub struct SmsWindow {
     core: Core,
     pub device_id: String,
+    #[allow(dead_code)]
     pub device_name: String,
     pub conversations: Vec<Conversation>,
     pub contacts: HashMap<String, String>,
@@ -89,9 +95,6 @@ impl Application for SmsWindow {
     fn subscription(&self) -> Subscription<Self::Message> {
         let device_id = self.device_id.clone();
 
-        // Use a stable ID — COSMIC will NOT restart this subscription as long
-        // as the same ID is returned and the stream hasn't ended.
-        // The stream is kept alive indefinitely by the reconnect loop inside.
         Subscription::run_with_id(
             format!("sms-{}", device_id),
             stream! {
@@ -218,7 +221,7 @@ impl Application for SmsWindow {
             SmsMessage::UpdateNewChatPhone(phone) => {
                 self.new_chat_phone_input = phone;
             }
-            SmsMessage::SelectContactForNewChat(phone, _) => {
+            SmsMessage::SelectContactForNewChat(phone, _name) => {
                 self.new_chat_phone_input = phone;
             }
             SmsMessage::CreateNewChat => {
@@ -243,7 +246,7 @@ impl Application for SmsWindow {
         Task::none()
     }
 
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<'_, Self::Message> {
         let content = if self.show_new_chat_dialog {
             views::view_new_chat_dialog(self)
         } else {
@@ -260,61 +263,51 @@ impl SmsWindow {
     fn handle_protocol_event(&mut self, event: ProtocolEvent) {
         match event {
             ProtocolEvent::ConversationsReceived(conversations) => {
-                eprintln!("[SMS-APP] ConversationsReceived: {} (upsert)", conversations.len());
-                for conv in conversations {
-                    // Check if there's a temporary new_* conversation with the same phone number.
-                    // This happens when the user sends to a new contact: we pre-create a "new_XXX"
-                    // conversation, phone assigns the real thread_id and confirms back.
-                    let new_idx = self.conversations.iter().position(|c| {
-                        c.thread_id.starts_with("new_") && c.phone_number == conv.phone_number
-                    });
+                eprintln!("[SMS-APP] ConversationsReceived: {} conversations", conversations.len());
 
-                    if let Some(idx) = new_idx {
-                        // The temporary entry's thread_id needs to become the real one.
-                        let old_thread_id = self.conversations[idx].thread_id.clone();
+                // Merge: preserve new_* threads, update/add real ones
+                let mut merged = self.conversations.clone();
+                for incoming in &conversations {
+                    if incoming.thread_id.starts_with("new_") { continue; }
 
-                        // Update selected_thread if we were viewing the temp thread.
-                        if self.selected_thread.as_deref() == Some(&old_thread_id) {
-                            self.selected_thread = Some(conv.thread_id.clone());
-                        }
-
-                        // Fix thread_id on any optimistic messages so dedup works.
-                        for msg in &mut self.messages {
-                            if msg.thread_id == old_thread_id {
-                                msg.thread_id = conv.thread_id.clone();
-                            }
-                        }
-
-                        // Replace the temp entry with the real conversation.
-                        self.conversations[idx] = conv;
-                    } else if let Some(existing) = self.conversations.iter_mut()
-                        .find(|c| c.thread_id == conv.thread_id)
-                    {
-                        // Normal upsert — update fields of existing real conversation.
-                        existing.last_message = conv.last_message;
-                        existing.timestamp = conv.timestamp;
-                        existing.phone_number = conv.phone_number;
-                        existing.unread = conv.unread;
+                    // Check if we have a new_* placeholder for this phone number
+                    if let Some(pos) = merged.iter().position(|c| {
+                        c.thread_id.starts_with("new_")
+                            && super::utils::phone_numbers_match(&c.phone_number, &incoming.phone_number)
+                    }) {
+                        merged[pos] = incoming.clone();
+                    } else if let Some(existing) = merged.iter_mut().find(|c| c.thread_id == incoming.thread_id) {
+                        *existing = incoming.clone();
                     } else {
-                        self.conversations.push(conv);
+                        merged.push(incoming.clone());
                     }
                 }
-                self.conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+                // Remove any new_* threads that now have a real counterpart
+                merged.retain(|c| {
+                    if !c.thread_id.starts_with("new_") { return true; }
+                    !conversations.iter().any(|r| super::utils::phone_numbers_match(&r.phone_number, &c.phone_number))
+                });
+
+                self.conversations = merged;
                 self.update_conversation_names();
+
+                // If selected thread was new_*, update to real thread_id
+                if let Some(sel) = &self.selected_thread.clone() {
+                    if sel.starts_with("new_") {
+                        if let Some(conv) = self.conversations.iter().find(|c| !c.thread_id.starts_with("new_")) {
+                            self.selected_thread = Some(conv.thread_id.clone());
+                        }
+                    }
+                }
             }
             ProtocolEvent::MessageReceived(message) => {
                 eprintln!("[SMS-APP] MessageReceived thread={}", message.thread_id);
-                // Determine the effective selected thread — after a new_* → real thread
-                // transition above, selected_thread is already the real thread_id.
                 let is_selected = self.selected_thread.as_deref() == Some(&message.thread_id);
 
                 if is_selected {
                     let already_exists = self.messages.iter().any(|m| {
-                        // Exact ID match.
                         m.id == message.id
-                        // OR: optimistic sent message (same body, both type=2, within 5 min).
-                        // Thread_id check is skipped here because it may have just been
-                        // updated from new_XXX → real_id in ConversationsReceived above.
                         || (m.id.starts_with("sending_")
                             && m.type_ == 2
                             && message.type_ == 2
@@ -325,7 +318,6 @@ impl SmsWindow {
                     if !already_exists {
                         self.messages.push(message.clone());
                     } else {
-                        // Replace the optimistic placeholder with the real message.
                         if let Some(existing) = self.messages.iter_mut().find(|m| {
                             m.id.starts_with("sending_")
                             && m.type_ == 2
@@ -339,7 +331,6 @@ impl SmsWindow {
                     self.messages.sort_by_key(|m| m.date);
                 }
 
-                // Always update the conversation preview regardless of selected thread.
                 if let Some(conv) = self.conversations.iter_mut()
                     .find(|c| c.thread_id == message.thread_id)
                 {

@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use kdeconnect_dbus_client::{KdeConnectClient, ServiceEvent};
 use futures::StreamExt;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PairingNotification {
     pub device_id: String,
@@ -12,21 +13,21 @@ pub struct PairingNotification {
 }
 
 /// Start listening for pairing notifications via D-Bus
+#[allow(dead_code)]
 pub fn start_notification_listener(tx: mpsc::Sender<PairingNotification>, _daemon_mode: bool) {
     tokio::spawn(async move {
         eprintln!("📢 Starting pairing notification listener");
         
-        // Listen for D-Bus signals from kdeconnect-service
         if let Err(e) = listen_for_pairing_signals(tx).await {
             eprintln!("❌ Pairing notification listener failed: {:?}", e);
         }
     });
 }
 
+#[allow(dead_code)]
 async fn listen_for_pairing_signals(tx: mpsc::Sender<PairingNotification>) -> anyhow::Result<()> {
     eprintln!("Connecting to KDE Connect D-Bus service...");
     
-    // Use kdeconnect_dbus_client to listen for events
     let client = KdeConnectClient::new().await?;
     let mut event_stream = client.listen_for_events().await;
     
@@ -43,15 +44,12 @@ async fn listen_for_pairing_signals(tx: mpsc::Sender<PairingNotification>) -> an
                     device_type: device.device_type,
                 };
                 
-                // Send to UI
                 if tx.send(notification).await.is_err() {
                     eprintln!("⚠️  Failed to send pairing notification - receiver dropped");
                     break;
                 }
             }
-            _ => {
-                // Ignore other events
-            }
+            _ => {}
         }
     }
     

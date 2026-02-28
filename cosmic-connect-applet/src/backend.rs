@@ -79,12 +79,14 @@ pub async fn fetch_devices() -> Vec<Device> {
 }
 
 /// Update device in cache
+#[allow(dead_code)]
 pub async fn update_device(device_id: String, device: Device) {
     let mut cache = DEVICE_CACHE.lock().await;
     cache.insert(device_id, device);
 }
 
 /// Remove device from cache
+#[allow(dead_code)]
 pub async fn remove_device(device_id: &str) {
     let mut cache = DEVICE_CACHE.lock().await;
     cache.remove(device_id);
@@ -148,20 +150,16 @@ pub async fn send_clipboard(device_id: String, content: String) -> Result<()> {
 /// Browse device filesystem (via SFTP)
 pub async fn browse_device_filesystem(_device_id: String) -> Result<()> {
     eprintln!("⚠️  Browse filesystem not yet implemented via D-Bus");
-    // TODO: Implement SFTP browsing through D-Bus
     Ok(())
 }
 
 /// Accept a pairing request
 pub async fn accept_pairing(device_id: String) -> Result<()> {
-    // Pairing acceptance is handled automatically by the service
-    // Just trigger a pair request
     pair_device(device_id).await
 }
 
 /// Reject a pairing request
 pub async fn reject_pairing(device_id: String) -> Result<()> {
-    // Rejecting is essentially unpairing
     unpair_device(device_id).await
 }
 
@@ -177,6 +175,7 @@ pub async fn ring_device(device_id: String) -> Result<()> {
 }
 
 /// Request SMS conversations from a device
+#[allow(dead_code)]
 pub async fn request_conversations(device_id: String) -> Result<()> {
     let client_guard = CLIENT.lock().await;
     
@@ -188,6 +187,7 @@ pub async fn request_conversations(device_id: String) -> Result<()> {
 }
 
 /// Request a specific SMS conversation thread
+#[allow(dead_code)]
 pub async fn request_conversation(device_id: String, thread_id: i64) -> Result<()> {
     let client_guard = CLIENT.lock().await;
     
@@ -199,6 +199,7 @@ pub async fn request_conversation(device_id: String, thread_id: i64) -> Result<(
 }
 
 /// Send an SMS message
+#[allow(dead_code)]
 pub async fn send_sms(device_id: String, phone_number: String, message: String) -> Result<()> {
     let client_guard = CLIENT.lock().await;
     
@@ -210,15 +211,14 @@ pub async fn send_sms(device_id: String, phone_number: String, message: String) 
 }
 
 /// Create a stream of service events
+#[allow(dead_code)]
 pub async fn event_stream() -> futures::stream::BoxStream<'static, ServiceEvent> {
     use tokio::sync::mpsc;
     use tokio::time::{sleep, Duration};
     
     let (tx, rx) = mpsc::channel::<ServiceEvent>(100);
     
-    // Spawn background task to listen for events
     tokio::spawn(async move {
-        // Wait for client to be initialized (with timeout)
         let mut attempts = 0;
         let client = loop {
             let client_guard = CLIENT.lock().await;
@@ -252,15 +252,12 @@ pub async fn event_stream() -> futures::stream::BoxStream<'static, ServiceEvent>
         eprintln!("Event stream ended");
     });
     
-    // Return stream from channel that never ends
     futures::stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
             Some(event) => Some((event, rx)),
             None => {
-                // Channel closed, sleep forever instead of ending
-                // This prevents the unfold panic
                 loop {
-                    sleep(Duration::from_secs(3600)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
                 }
             }
         }

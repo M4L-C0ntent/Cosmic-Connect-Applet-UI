@@ -10,7 +10,7 @@ use super::models::Conversation;
 use super::utils::{format_timestamp, normalize_phone_number, phone_numbers_match};
 
 /// Main view - conversations list + thread view
-pub fn view_main(app: &SmsWindow) -> Element<SmsMessage> {
+pub fn view_main(app: &SmsWindow) -> Element<'_, SmsMessage> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     
     widget::row()
@@ -22,7 +22,7 @@ pub fn view_main(app: &SmsWindow) -> Element<SmsMessage> {
 }
 
 /// New chat dialog view
-pub fn view_new_chat_dialog(app: &SmsWindow) -> Element<SmsMessage> {
+pub fn view_new_chat_dialog(app: &SmsWindow) -> Element<'_, SmsMessage> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     
     let mut dialog_content = widget::column()

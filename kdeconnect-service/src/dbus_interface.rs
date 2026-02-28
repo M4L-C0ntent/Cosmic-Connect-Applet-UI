@@ -218,9 +218,11 @@ impl SmsInterface {
 
 /// Main service coordinator
 pub struct KdeConnectService {
+    #[allow(dead_code)]
     connection: Connection,
     #[allow(dead_code)]
     event_sender: Arc<mpsc::UnboundedSender<AppEvent>>,
+    #[allow(dead_code)]
     devices: Arc<Mutex<HashMap<String, DbusDevice>>>,
 }
 
