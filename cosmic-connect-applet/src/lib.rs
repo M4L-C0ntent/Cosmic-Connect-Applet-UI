@@ -11,3 +11,6 @@ pub mod notifications;
 pub mod plugins;
 pub mod portal;
 pub mod ui;
+
+// Re-export commonly used types
+pub use notifications::{PairingNotification, start_notification_listener};

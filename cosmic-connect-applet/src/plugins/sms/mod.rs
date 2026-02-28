@@ -2,13 +2,14 @@
 
 // #[allow(dead_code)] = Placeholder for code that will be used once features are fully integrated
 
-mod app;
-mod dbus;
 mod emoji;
 mod messages;
-mod models;
 mod utils;
 mod views;
+
+pub mod dbus;
+pub mod models;
+pub mod app;
 
 pub use app::SmsWindow;
 
